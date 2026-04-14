@@ -1,0 +1,15 @@
+{
+  "name": "madden-academy-discord-proxy",
+  "version": "1.0.0",
+  "description": "Forwards Discord message events to n8n webhook",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.3"
+  }
+}
