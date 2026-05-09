@@ -127,30 +127,79 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
   } else if (action === 'reject_draft') {
+    const originalDraft = interaction.message.embeds[0]?.description || '';
+    const originalFileName = interaction.message.embeds[0]?.description?.match(/`(.+?)`/)?.[1] || '';
+
+    // Update message to ask for feedback — keep embed, remove buttons
     await interaction.update({
-      content: `❌ **Rejected by ${interaction.user.username}.** Draft discarded.`,
+      content: `✏️ **Revision requested by ${interaction.user.username}.**\n\n<@366635705964953601> Please type your feedback below and I'll regenerate the draft.\n\n⏳ You have **5 minutes** to respond.`,
       embeds: interaction.message.embeds,
-      components: [], // remove buttons
+      components: [],
     });
 
-    // Optionally notify n8n of rejection too
-    if (N8N_APPROVAL_WEBHOOK) {
-      try {
-        await fetch(N8N_APPROVAL_WEBHOOK, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'reject',
-            tweetId,
-            driveFileId,
-            rejectedBy: interaction.user.username,
-            timestamp: new Date().toISOString(),
-          }),
-        });
-      } catch (err) {
-        console.error('[interaction] Failed to forward rejection to n8n:', err.message);
+    // Collect Manu's next message in this channel
+    const channel = interaction.channel;
+    const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+    const collector = channel.createMessageCollector({
+      filter: (m) => m.author.id === interaction.user.id,
+      max: 1,
+      time: TIMEOUT_MS,
+    });
+
+    collector.on('collect', async (feedbackMessage) => {
+      const feedback = feedbackMessage.content;
+
+      // Delete Manu's feedback message to keep channel clean
+      try { await feedbackMessage.delete(); } catch (e) {}
+
+      // Update the original message to show regenerating state
+      await interaction.editReply({
+        content: `🔄 **Regenerating draft with your feedback...**\n\n> "${feedback}"`,
+        embeds: interaction.message.embeds,
+        components: [],
+      });
+
+      // Forward to n8n for regeneration
+      if (N8N_APPROVAL_WEBHOOK) {
+        try {
+          await fetch(N8N_APPROVAL_WEBHOOK, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'revise',
+              driveFileId,
+              feedback,
+              originalDraft,
+              originalFileName,
+              rejectedBy: interaction.user.username,
+              channelId: channel.id,
+              messageId: interaction.message.id,
+              timestamp: new Date().toISOString(),
+            }),
+          });
+          console.log('[interaction] Revision request forwarded to n8n');
+        } catch (err) {
+          console.error('[interaction] Failed to forward revision to n8n:', err.message);
+          await interaction.editReply({
+            content: '❌ Failed to send revision request. Please try again.',
+            components: [],
+          });
+        }
       }
-    }
+    });
+
+    collector.on('end', async (collected) => {
+      if (collected.size === 0) {
+        // Timeout — no feedback received
+        await interaction.editReply({
+          content: '⏰ **Feedback timeout.** No response received in 5 minutes. Draft discarded.',
+          embeds: [],
+          components: [],
+        });
+        console.log(`[interaction] Feedback timeout for reject by ${interaction.user.username}`);
+      }
+    });
   }
 });
 
