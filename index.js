@@ -113,12 +113,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            action: 'approve',
-            tweetId,
-            driveFileId,
-            approvedBy: interaction.user.username,
-            timestamp: new Date().toISOString(),
-          }),
+  action: 'approve',
+  tweetId,
+  driveFileId,
+  draft: interaction.message.embeds[0]?.description?.split('---\n\n')[1] || '',
+  approvedBy: interaction.user.username,
+  timestamp: new Date().toISOString(),
+}),
         });
         console.log(`[interaction] Approval forwarded to n8n for tweet ${tweetId}`);
       } catch (err) {
