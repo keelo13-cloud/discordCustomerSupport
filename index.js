@@ -9,7 +9,7 @@ const express = require('express');
 
 const DISCORD_BOT_TOKEN    = process.env.DISCORD_BOT_TOKEN;
 const N8N_WEBHOOK_URL      = process.env.N8N_WEBHOOK_URL;
-const N8N_APPROVAL_WEBHOOK = process.env.N8N_APPROVAL_WEBHOOK; // new webhook for button interactions
+const N8N_APPROVAL_WEBHOOK = process.env.N8N_APPROVAL_WEBHOOK;
 const PROXY_SECRET         = process.env.PROXY_SECRET || '';
 const SUPPORT_CHANNEL_ID   = process.env.SUPPORT_CHANNEL_ID || '';
 const PORT                 = process.env.PORT || 3000;
@@ -96,14 +96,21 @@ app.listen(PORT, () => console.log(`[express] Server running on port ${PORT}`));
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isButton()) return;
 
+  console.log('[button] Interaction received');
+  console.log('[button] customId:', interaction.customId);
+
   const [action, tweetId, driveFileId] = interaction.customId.split('::');
+
+  console.log('[button] action:', action);
+  console.log('[button] tweetId:', tweetId);
+  console.log('[button] driveFileId:', driveFileId);
 
   if (action === 'approve_draft') {
     // Acknowledge immediately to avoid Discord timeout
     await interaction.update({
-      content: `✅ **Approved by ${interaction.user.username}!** Processing video upload...`,
+      content: `✅ **Approved by ${interaction.user.username}!** Queuing to Hypefury...`,
       embeds: interaction.message.embeds,
-      components: [], // remove buttons
+      components: [],
     });
 
     // Forward approval to n8n
@@ -113,34 +120,34 @@ client.on(Events.InteractionCreate, async (interaction) => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-  action: 'approve',
-  tweetId,
-  driveFileId,
-  draft: interaction.message.embeds[0]?.description?.split('---\n\n')[1] || '',
-  approvedBy: interaction.user.username,
-  timestamp: new Date().toISOString(),
-}),
+            action: 'approve',
+            tweetId,
+            driveFileId,
+            draft: interaction.message.embeds[0]?.description?.split('---\n\n')[1] || '',
+            approvedBy: interaction.user.username,
+            timestamp: new Date().toISOString(),
+          }),
         });
         console.log(`[interaction] Approval forwarded to n8n for tweet ${tweetId}`);
       } catch (err) {
         console.error('[interaction] Failed to forward approval to n8n:', err.message);
       }
+    } else {
+      console.warn('[interaction] N8N_APPROVAL_WEBHOOK is not set');
     }
 
   } else if (action === 'reject_draft') {
     const originalDraft = interaction.message.embeds[0]?.description || '';
     const originalFileName = interaction.message.embeds[0]?.description?.match(/`(.+?)`/)?.[1] || '';
 
-    // Update message to ask for feedback — keep embed, remove buttons
     await interaction.update({
       content: `✏️ **Revision requested by ${interaction.user.username}.**\n\n<@366635705964953601> Please type your feedback below and I'll regenerate the draft.\n\n⏳ You have **5 minutes** to respond.`,
       embeds: interaction.message.embeds,
       components: [],
     });
 
-    // Collect Manu's next message in this channel
     const channel = interaction.channel;
-    const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+    const TIMEOUT_MS = 5 * 60 * 1000;
 
     const collector = channel.createMessageCollector({
       filter: (m) => m.author.id === interaction.user.id,
@@ -151,17 +158,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     collector.on('collect', async (feedbackMessage) => {
       const feedback = feedbackMessage.content;
 
-      // Delete Manu's feedback message to keep channel clean
       try { await feedbackMessage.delete(); } catch (e) {}
 
-      // Update the original message to show regenerating state
       await interaction.editReply({
         content: `🔄 **Regenerating draft with your feedback...**\n\n> "${feedback}"`,
         embeds: interaction.message.embeds,
         components: [],
       });
 
-      // Forward to n8n for regeneration
       if (N8N_APPROVAL_WEBHOOK) {
         try {
           await fetch(N8N_APPROVAL_WEBHOOK, {
@@ -192,7 +196,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     collector.on('end', async (collected) => {
       if (collected.size === 0) {
-        // Timeout — no feedback received
         await interaction.editReply({
           content: '⏰ **Feedback timeout.** No response received in 5 minutes. Draft discarded.',
           embeds: [],
@@ -201,6 +204,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         console.log(`[interaction] Feedback timeout for reject by ${interaction.user.username}`);
       }
     });
+
+  } else {
+    console.warn('[button] Unknown action:', action);
   }
 });
 
